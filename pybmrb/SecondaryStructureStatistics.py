@@ -11,6 +11,9 @@ from mmcif.io.PdbxReader import PdbxReader
 # Set the log level to INFO
 logging.getLogger().setLevel(logging.INFO)
 import pynmrstar
+import os.path
+import csv
+import plotly.express as px
 
 # _API_URL = "http://dev-api.bmrb.io/v2"
 _API_URL = "http://api.bmrb.io/v2"
@@ -26,6 +29,7 @@ one_letter_code = dict([(value, key) for key, value in three_letter_code.items()
 
 def _get_bmrb_pdb_mapping():
     url = Request(_API_URL+_PDB_BMRB_MAPPING)
+    #url = "https://bmrb.io/ftp/pub/bmrb/nmr_pdb_integrated_data/adit_nmr_matched_pdb_bmrb_entry_ids.csv"
     url.add_header('Application', 'PyBMRB')
     r = urlopen(url)
     dump = json.loads(r.read())
@@ -34,142 +38,157 @@ def _get_bmrb_pdb_mapping():
     return dump
 
 def merge_cs_ss(pdb,bmrb):
-    #pdb_file = _FTP_PDB_PATH+f'/{pdb[1]}{pdb[2]}/{pdb}.cif.gz'
-    #bmrb_file = _FTP_BMRB_PATH+f'/bmr{bmrb}/bmr{bmrb}_3.str'
-    pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
-    bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
+    pdb_file = _FTP_PDB_PATH+f'/{pdb[1]}{pdb[2]}/{pdb}.cif.gz'
+    bmrb_file = _FTP_BMRB_PATH+f'/bmr{bmrb}/bmr{bmrb}_3.str'
+    #pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
+    #bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
     ss_data = get_dssp_ss(pdb_file)
     err=''
     if len(ss_data)>0:
         cs_data = get_cs_data(bmrb_file)
-        #fo=open(f'./cs_ss_out/{bmrb}_{pdb}.csv','w')
-        fo = open(f'{bmrb}_{pdb}.csv', 'w')
-        for cs_list in cs_data:
-            for row in cs_data[cs_list]:
-                #print (cs_data[cs_list][row],ss_data[(row[0],row[1],row[2],row[3])])
-                try:
-                    fo.write(f'{row[3]},{row[4]},{cs_data[cs_list][row]},{ss_data[(row[0],row[1],row[2],row[3])]},{row[1]},{row[2]},{row[0]},{pdb},{bmrb}\n')
-                except KeyError:
-                    err+=f'Missing atom {(row[0],row[1],row[2],row[3])} {pdb},{bmrb}\n'
-        fo.close()
-        msg = f"Success {pdb},{bmrb}"
+        if len(cs_data)>0:
+            #fo=open(f'./cs_ss_out/{bmrb}_{pdb}.csv','w')
+            fo = open(f'{bmrb}_{pdb}.csv', 'w')
+            for cs_list in cs_data:
+                for row in cs_data[cs_list]:
+                    #print (cs_data[cs_list][row],ss_data[(row[0],row[1],row[2],row[3])])
+                    try:
+                        fo.write(f'{row[3]},{row[4]},{cs_data[cs_list][row]},{ss_data[(row[0],row[1],row[2],row[3])]},{row[1]},{row[2]},{row[0]},{pdb},{bmrb}\n')
+                    except KeyError:
+                        err+=f'Missing atom {(row[0],row[1],row[2],row[3])} {pdb},{bmrb}\n'
+            fo.close()
+            msg = f"Success {pdb},{bmrb}"
+        else:
+            msg = f"No BMRB entry  found in CIF file {pdb},{bmrb}"
     else:
         msg = f"No DSSP SS information found in CIF file {pdb},{bmrb}"
     return msg,err
 
 
 def get_cs_data(str_file):
-    ent = pynmrstar.Entry.from_file(str_file)
-    cs_loop=ent.get_loops_by_category('Atom_chem_shift')
-    cs_data={}
-    for cs in cs_loop:
-        col_names=cs.get_tag_names()
-        auth_asym_idx = col_names.index('_Atom_chem_shift.Auth_asym_ID')
-        auth_seq_idx = col_names.index('_Atom_chem_shift.Auth_seq_ID')
-        seq_idx = col_names.index('_Atom_chem_shift.Comp_index_ID')
-        auth_comp_idx = col_names.index('_Atom_chem_shift.Auth_comp_ID')
-        comp_idx = col_names.index('_Atom_chem_shift.Comp_ID')
-        atom_idx = col_names.index('_Atom_chem_shift.Atom_ID')
-        cs_idx = col_names.index('_Atom_chem_shift.Val')
-        list_idx = col_names.index('_Atom_chem_shift.Assigned_chem_shift_list_ID')
-        for row in cs.data:
-            if row[list_idx] not in cs_data:
-                cs_data[row[list_idx]]={}
-            if row[auth_seq_idx] == '.':
-                auth_seq_id = int(row[seq_idx])
-            else:
-                auth_seq_id = int(row[auth_seq_idx])
-            if row[auth_asym_idx] == '.':
-                chain_id = 'A'
-            else:
-                chain_id = row[auth_asym_idx]
-            kk = (chain_id,int(row[seq_idx]),auth_seq_id,row[comp_idx],row[atom_idx])
-            cs_data[row[list_idx]][kk]= float(row[cs_idx])
+    try:
+        ent = pynmrstar.Entry.from_file(str_file)
+        cs_loop=ent.get_loops_by_category('Atom_chem_shift')
+        cs_data={}
+        for cs in cs_loop:
+            col_names=cs.get_tag_names()
+            auth_asym_idx = col_names.index('_Atom_chem_shift.Auth_asym_ID')
+            auth_seq_idx = col_names.index('_Atom_chem_shift.Auth_seq_ID')
+            seq_idx = col_names.index('_Atom_chem_shift.Comp_index_ID')
+            auth_comp_idx = col_names.index('_Atom_chem_shift.Auth_comp_ID')
+            comp_idx = col_names.index('_Atom_chem_shift.Comp_ID')
+            atom_idx = col_names.index('_Atom_chem_shift.Atom_ID')
+            cs_idx = col_names.index('_Atom_chem_shift.Val')
+            list_idx = col_names.index('_Atom_chem_shift.Assigned_chem_shift_list_ID')
+            for row in cs.data:
+                if row[list_idx] not in cs_data:
+                    cs_data[row[list_idx]]={}
+                if row[auth_seq_idx] == '.':
+                    auth_seq_id = int(row[seq_idx])
+                else:
+                    try:
+                        auth_seq_id = int(row[auth_seq_idx])
+                    except ValueError:
+                        auth_seq_id = int(row[seq_idx])
+                if row[auth_asym_idx] == '.':
+                    chain_id = 'A'
+                else:
+                    chain_id = row[auth_asym_idx]
+                kk = (chain_id,int(row[seq_idx]),auth_seq_id,row[comp_idx],row[atom_idx])
+                cs_data[row[list_idx]][kk]= float(row[cs_idx])
+    except FileNotFoundError:
+        cs_data={}
     return cs_data
 
 
 
 def get_dssp_ss(cif_file):
     cif_data = []
-    if cif_file.endswith(".gz"):
-        ifh = gzip.open(cif_file,'rt')
-    else:
-        ifh = open(cif_file, 'r')
-    pRd = PdbxReader(ifh)
-    pRd.read(cif_data)
-    ifh.close()
-    c0 = cif_data[0]
-    struct_conf = c0.getObj('struct_conf')
-    entity_poly_seq = c0.getObj('entity_poly_seq')
-    entity_poly = c0.getObj('entity_poly')
-    col_names3 = entity_poly.getAttributeList()
-    entity_id_idx = col_names3.index('entity_id',0)
-    strand_id_idx = col_names3.index('pdbx_strand_id',0)
-    entities = {}
-    for dat in entity_poly.getRowList():
-        entities[dat[entity_id_idx]]=dat[strand_id_idx].split(",")
     try:
-        col_names = struct_conf.getAttributeList()
-        col_names2 = entity_poly_seq.getAttributeList()
-        poly_seq_num_idx = col_names2.index('num')
-        poly_seq_mono_idx = col_names2.index('mon_id')
-        poly_seq_entity_idx = col_names2.index('entity_id')
-        sequence = {}
-        for dat in entity_poly_seq.getRowList():
-            for c in entities[dat[poly_seq_entity_idx]]:
-                if c not in sequence:
-                    sequence[c]={}
-            for c in entities[dat[poly_seq_entity_idx]]:
-                sequence[c][dat[poly_seq_num_idx]]=dat[poly_seq_mono_idx]
-        conf_type_idx = col_names.index('conf_type_id')
-        beg_comp_idx = col_names.index('beg_label_comp_id')
-        beg_asym_idx = col_names.index('beg_label_asym_id')
-        beg_seq_idx = col_names.index('beg_label_seq_id')
-        beg_auth_comp_idx = col_names.index('beg_auth_comp_id')
-        beg_auth_asym_idx = col_names.index('beg_auth_asym_id')
-        beg_auth_seq_idx = col_names.index('beg_auth_seq_id')
-        end_comp_idx = col_names.index('end_label_comp_id')
-        end_asym_idx = col_names.index('end_label_asym_id')
-        end_seq_idx = col_names.index('end_label_seq_id')
-        end_auth_comp_idx = col_names.index('end_auth_comp_id')
-        end_auth_asym_idx = col_names.index('end_auth_asym_id')
-        end_auth_seq_idx = col_names.index('end_auth_seq_id')
-        ss_info={}
-        ss_info['seq_id']={}
-        ss_info['auth_seq_id']={}
-        for dat in struct_conf.getRowList():
-            conf_type = dat[conf_type_idx]
-            beg_auth_seq_id = dat[beg_auth_seq_idx]
-            beg_auth_asym_id = dat[beg_auth_asym_idx]
-            beg_auth_comp_id = dat[beg_auth_comp_idx]
-            end_auth_seq_id = dat[end_auth_seq_idx]
-            end_auth_asym_id = dat[end_auth_asym_idx]
-            end_auth_comp_id = dat[end_auth_comp_idx]
-            beg_seq_id = dat[beg_seq_idx]
-            beg_asym_id = dat[beg_asym_idx]
-            beg_comp_id = dat[beg_comp_idx]
-            end_seq_id = dat[end_seq_idx]
-            end_asym_id = dat[end_asym_idx]
-            end_comp_id = dat[end_comp_idx]
-            ss_info['seq_id'][(beg_asym_id,beg_seq_id,beg_comp_id,end_asym_id,end_seq_id,end_asym_id)]=conf_type
-            ss_info['auth_seq_id'][(beg_auth_asym_id,beg_auth_seq_id,beg_auth_comp_id,end_auth_asym_id,end_auth_seq_id,end_auth_comp_id)]=conf_type
-        ss={}
-        for k1,k2 in zip(ss_info['seq_id'],ss_info['auth_seq_id']):
-            if int(k1[1]) != int(k2[1]):
-                offset = int(k1[1])-int(k2[1])
-            else:
-                offset = 0
-            for i in range(int(k1[1]),int(k1[4])+1):
-                try:
-                    ss[(k1[0],i,i-offset,sequence[k1[0]][str(i)])] = ss_info['seq_id'][k1]
-                except KeyError:
-                    print (k1)
-        for k in sequence:
-            for i in sequence[k]:
-                kk = (k,int(i),int(i)-offset,sequence[k][i])
-                if kk not in ss:
-                    ss[kk] = 'COIL'
-    except AttributeError:
+        if cif_file.endswith(".gz"):
+            ifh = gzip.open(cif_file,'rt')
+        else:
+            ifh = open(cif_file, 'r')
+        pRd = PdbxReader(ifh)
+        pRd.read(cif_data)
+        ifh.close()
+        c0 = cif_data[0]
+        struct_conf = c0.getObj('struct_conf')
+        entity_poly_seq = c0.getObj('entity_poly_seq')
+        entity_poly = c0.getObj('entity_poly')
+        try:
+            col_names3 = entity_poly.getAttributeList()
+            entity_id_idx = col_names3.index('entity_id',0)
+            strand_id_idx = col_names3.index('pdbx_strand_id',0)
+            entities = {}
+            for dat in entity_poly.getRowList():
+                entities[dat[entity_id_idx]]=dat[strand_id_idx].split(",")
+            try:
+                col_names = struct_conf.getAttributeList()
+                col_names2 = entity_poly_seq.getAttributeList()
+                poly_seq_num_idx = col_names2.index('num')
+                poly_seq_mono_idx = col_names2.index('mon_id')
+                poly_seq_entity_idx = col_names2.index('entity_id')
+                sequence = {}
+                for dat in entity_poly_seq.getRowList():
+                    for c in entities[dat[poly_seq_entity_idx]]:
+                        if c not in sequence:
+                            sequence[c]={}
+                    for c in entities[dat[poly_seq_entity_idx]]:
+                        sequence[c][dat[poly_seq_num_idx]]=dat[poly_seq_mono_idx]
+                conf_type_idx = col_names.index('conf_type_id')
+                beg_comp_idx = col_names.index('beg_label_comp_id')
+                beg_asym_idx = col_names.index('beg_label_asym_id')
+                beg_seq_idx = col_names.index('beg_label_seq_id')
+                beg_auth_comp_idx = col_names.index('beg_auth_comp_id')
+                beg_auth_asym_idx = col_names.index('beg_auth_asym_id')
+                beg_auth_seq_idx = col_names.index('beg_auth_seq_id')
+                end_comp_idx = col_names.index('end_label_comp_id')
+                end_asym_idx = col_names.index('end_label_asym_id')
+                end_seq_idx = col_names.index('end_label_seq_id')
+                end_auth_comp_idx = col_names.index('end_auth_comp_id')
+                end_auth_asym_idx = col_names.index('end_auth_asym_id')
+                end_auth_seq_idx = col_names.index('end_auth_seq_id')
+                ss_info={}
+                ss_info['seq_id']={}
+                ss_info['auth_seq_id']={}
+                for dat in struct_conf.getRowList():
+                    conf_type = dat[conf_type_idx]
+                    beg_auth_seq_id = dat[beg_auth_seq_idx]
+                    beg_auth_asym_id = dat[beg_auth_asym_idx]
+                    beg_auth_comp_id = dat[beg_auth_comp_idx]
+                    end_auth_seq_id = dat[end_auth_seq_idx]
+                    end_auth_asym_id = dat[end_auth_asym_idx]
+                    end_auth_comp_id = dat[end_auth_comp_idx]
+                    beg_seq_id = dat[beg_seq_idx]
+                    beg_asym_id = dat[beg_asym_idx]
+                    beg_comp_id = dat[beg_comp_idx]
+                    end_seq_id = dat[end_seq_idx]
+                    end_asym_id = dat[end_asym_idx]
+                    end_comp_id = dat[end_comp_idx]
+                    ss_info['seq_id'][(beg_asym_id,beg_seq_id,beg_comp_id,end_asym_id,end_seq_id,end_asym_id)]=conf_type
+                    ss_info['auth_seq_id'][(beg_auth_asym_id,beg_auth_seq_id,beg_auth_comp_id,end_auth_asym_id,end_auth_seq_id,end_auth_comp_id)]=conf_type
+                ss={}
+                for k1,k2 in zip(ss_info['seq_id'],ss_info['auth_seq_id']):
+                    if int(k1[1]) != int(k2[1]):
+                        offset = int(k1[1])-int(k2[1])
+                    else:
+                        offset = 0
+                    for i in range(int(k1[1]),int(k1[4])+1):
+                        try:
+                            ss[(k1[0],i,i-offset,sequence[k1[0]][str(i)])] = ss_info['seq_id'][k1]
+                        except KeyError:
+                            print (k1)
+                for k in sequence:
+                    for i in sequence[k]:
+                        kk = (k,int(i),int(i)-offset,sequence[k][i])
+                        if kk not in ss:
+                            ss[kk] = 'COIL'
+            except AttributeError:
+                ss={}
+        except AttributeError:
+            ss={}
+    except FileNotFoundError:
         ss={}
     return ss
 
@@ -212,19 +231,67 @@ def get_dssp_ss(cif_file):
     #     atom_ids[model] = aid
     # return pdb_models
 
+
+def check_files(pair_list):
+    ok=0
+    not_ok=0
+    empty=0
+    f1=open('failed.txt','w')
+    f2=open('empty.txt','w')
+    for k in pair_list:
+        bmrb=k['bmrb_id']
+        for pdb in k['pdb_ids']:
+            file_name = f'/Users/kumaranbaskaran/ss/{bmrb}_{pdb.lower()}.csv'
+            if not os.path.isfile(file_name):
+                not_ok+=1
+                f1.write(f'{bmrb},{pdb}\n')
+            else:
+                f=open(file_name,'r').read().split("\n")[:-1]
+                if len(f)==0:
+                    empty+=1
+                    f2.write(f'{bmrb},{pdb}\n')
+                else:
+                    ok+=1
+                    print (f)
+    print (f'{ok} files generated, {not_ok} files failed and {empty} files were empty' )
+
+def plot_ss_cs(csvfile):
+    cs=[]
+    res=[]
+    atom=[]
+    ss=[]
+    tag=[]
+    with open(csvfile, mode='r') as file:
+        csvFile = csv.reader(file)
+        for lines in csvFile:
+            if lines[0]=='CYS':# and lines[1]=='CB':
+                res.append(lines[0])
+                atom.append(lines[1])
+                cs.append(float(lines[2]))
+                ss.append(lines[3])
+                tag.append(f'{lines[0]}-{lines[1]}')
+    uniq_tags= list(set(tag))
+    for t in uniq_tags:
+        
+    fig = px.histogram(x=cs,color=tag)
+    fig.show()
+
 if __name__ == "__main__":
-    msg,err = merge_cs_ss('1nk2','4141')
-    print (msg)
-    print (err)
+    plot_ss_cs('ss_cs.csv')
+    # msg,err = merge_cs_ss('4481','1B9P')
+    # print (msg)
+    # print (err)
     # pair_list = _get_bmrb_pdb_mapping()
+    # check_files(pair_list)
     # f=open('running_log.txt','w')
     # f1=open('running_err.txt','w')
     # for k in pair_list:
     #     bmrb = k['bmrb_id']
     #     for pdb in k['pdb_ids']:
-    #         msg,err = merge_cs_ss(pdb.lower(),bmrb)
-    #         f.write(f'{msg}\n')
-    #         f1.write(f'{err}\n')
+    #         if pdb.lower() not in ['1dey','1ugt']:
+    #             msg,err = merge_cs_ss(pdb.lower(),bmrb)
+    #             f.write(f'{msg}\n')
+    #             f1.write(f'{err}\n')
     # f.close()
     # f1.close()
     #####################
