@@ -13,13 +13,14 @@ logging.getLogger().setLevel(logging.INFO)
 import pynmrstar
 import os.path
 import csv
-import plotly.express as px
+#import plotly.express as px
 
 # _API_URL = "http://dev-api.bmrb.io/v2"
 _API_URL = "http://api.bmrb.io/v2"
 _PDB_BMRB_MAPPING = "/mappings/bmrb/pdb?format=json&match_type=exact"
 _FTP_BMRB_PATH = "/projects/BMRB/public/ftp/pub/bmrb/entry_directories"
 _FTP_PDB_PATH = "/projects/BMRB/public/ftp/pub/pdb/data/structures/divided/mmCIF"
+_FTP_VAL_PATH = "/projects/BMRB/public/ftp/pub/pdb/validation_reports"
 three_letter_code = {'I': 'ILE', 'Q': 'GLN', 'G': 'GLY', 'E': 'GLU', 'C': 'CYS',
                      'D': 'ASP', 'S': 'SER', 'K': 'LYS', 'P': 'PRO', 'N': 'ASN',
                      'V': 'VAL', 'T': 'THR', 'H': 'HIS', 'W': 'TRP', 'F': 'PHE',
@@ -43,17 +44,32 @@ def merge_cs_ss(pdb,bmrb):
     #pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
     #bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
     ss_data = get_dssp_ss(pdb_file)
+    try:
+        cs_ref_err = get_cs_referencing_error(pdb)
+    except FileNotFoundError:
+        cs_ref_err = {}
     err=''
     if len(ss_data)>0:
         cs_data = get_cs_data(bmrb_file)
         if len(cs_data)>0:
             #fo=open(f'./cs_ss_out/{bmrb}_{pdb}.csv','w')
-            fo = open(f'{bmrb}_{pdb}.csv', 'w')
+            fo = open(f'./cs_ss_out2/{bmrb}_{pdb}.csv', 'w')
             for cs_list in cs_data:
                 for row in cs_data[cs_list]:
+                    ref_err = None
+                    if len(row[4])>2:
+                        try:
+                            ref_err = cs_ref_err[row[4][:2]]
+                        except KeyError:
+                            pass
+                    else:
+                        try:
+                            ref_err = cs_ref_err[row[4]]
+                        except KeyError:
+                            pass
                     #print (cs_data[cs_list][row],ss_data[(row[0],row[1],row[2],row[3])])
                     try:
-                        fo.write(f'{row[3]},{row[4]},{cs_data[cs_list][row]},{ss_data[(row[0],row[1],row[2],row[3])]},{row[1]},{row[2]},{row[0]},{pdb},{bmrb}\n')
+                        fo.write(f'{row[3]},{row[4]},{cs_data[cs_list][row]},{ss_data[(row[0],row[1],row[2],row[3])]},{row[1]},{row[2]},{row[0]},{pdb},{bmrb},{ref_err}\n')
                     except KeyError:
                         err+=f'Missing atom {(row[0],row[1],row[2],row[3])} {pdb},{bmrb}\n'
             fo.close()
@@ -100,8 +116,33 @@ def get_cs_data(str_file):
         cs_data={}
     return cs_data
 
-
-
+def get_cs_referencing_error(pdb):
+    val_cif_file = f'{_FTP_VAL_PATH}/{pdb[1:3]}/{pdb}/{pdb}_validation.cif.gz'
+    cif_data = []
+    cs_ref_er = {}
+    try:
+        if val_cif_file.endswith(".gz"):
+            ifh = gzip.open(val_cif_file, 'rt')
+        else:
+            ifh = open(val_cif_file,'r')
+        pRd = PdbxReader(ifh)
+        pRd.read(cif_data)
+        ifh.close()
+        c0 = cif_data[0]
+        cs_ref = c0.getObj('pdbx_vrpt_referencing_offset')
+        try:
+            col_names = cs_ref.getAttributeList()
+            lab_atm_idx = col_names.index('label_atom_id')
+            uncert_idx = col_names.index('uncertainty')
+            precis_idx = col_names.index('precision')
+            val_idx = col_names.index('value')
+            for data in cs_ref.getRowList():
+                cs_ref_er[data[lab_atm_idx]] = data[val_idx]
+        except AttributeError:
+            cs_ref_er = {}
+    except AttributeError:
+        cs_ref_er = {}
+    return cs_ref_er
 def get_dssp_ss(cif_file):
     cif_data = []
     try:
@@ -264,36 +305,37 @@ def plot_ss_cs(csvfile):
     with open(csvfile, mode='r') as file:
         csvFile = csv.reader(file)
         for lines in csvFile:
-            if lines[0]=='CYS':# and lines[1]=='CB':
+            if lines[0]=='CYS' and lines[1]=='CB':
                 res.append(lines[0])
                 atom.append(lines[1])
                 cs.append(float(lines[2]))
                 ss.append(lines[3])
                 tag.append(f'{lines[0]}-{lines[1]}')
     uniq_tags= list(set(tag))
-    for t in uniq_tags:
+    # for t in uniq_tags:
         
-    fig = px.histogram(x=cs,color=tag)
+    fig = px.histogram(x=cs,color=ss)
     fig.show()
 
 if __name__ == "__main__":
-    plot_ss_cs('ss_cs.csv')
+    #print (get_cs_referencing_error('6i57'))
+    # plot_ss_cs('../scripts/ss_cs.csv')
     # msg,err = merge_cs_ss('4481','1B9P')
     # print (msg)
     # print (err)
-    # pair_list = _get_bmrb_pdb_mapping()
-    # check_files(pair_list)
-    # f=open('running_log.txt','w')
-    # f1=open('running_err.txt','w')
-    # for k in pair_list:
-    #     bmrb = k['bmrb_id']
-    #     for pdb in k['pdb_ids']:
-    #         if pdb.lower() not in ['1dey','1ugt']:
-    #             msg,err = merge_cs_ss(pdb.lower(),bmrb)
-    #             f.write(f'{msg}\n')
-    #             f1.write(f'{err}\n')
-    # f.close()
-    # f1.close()
+    pair_list = _get_bmrb_pdb_mapping()
+    check_files(pair_list)
+    f=open('running_log.txt','w')
+    f1=open('running_err.txt','w')
+    for k in pair_list:
+        bmrb = k['bmrb_id']
+        for pdb in k['pdb_ids']:
+            if pdb.lower() not in ['1dey','1ugt']:
+                msg,err = merge_cs_ss(pdb.lower(),bmrb)
+                f.write(f'{msg}\n')
+                f1.write(f'{err}\n')
+    f.close()
+    f1.close()
     #####################
     #merge_cs_ss('1k8j','5716')
     #cs_data = get_cs_data('/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr36445_3.str')
