@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-"""
-Short description TBD
-"""
 import json
 import sys
 import logging
@@ -41,52 +37,6 @@ def _get_bmrb_pdb_mapping():
     #     print (i['bmrb_id'],i['pdb_ids'])
     return dump
 
-def merge_cs_ss(pdb,bmrb):
-    #pdb= pair.split("-")[0]
-    #bmrb = f'bmr{pair.split("-")[1]}'
-    #pdb_file = _REBOXITORY_CIF+f'/{pdb}.cif.gz'
-    #bmrb_file = _REBOXITORY_STR+f'/{bmrb}/{bmrb}_3.str'
-    # pdb_file = _FTP_PDB_PATH+f'/{pdb[1]}{pdb[2]}/{pdb}.cif.gz'
-    # bmrb_file = _FTP_BMRB_PATH+f'/bmr{bmrb}/bmr{bmrb}_3.str'
-    pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
-    bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
-    ss_data = get_dssp_ss(pdb_file)
-    try:
-        cs_ref_err = get_cs_referencing_error(pdb)
-    except FileNotFoundError:
-        cs_ref_err = {}
-    err=''
-    if len(ss_data)>0:
-        cs_data = get_cs_data(bmrb_file)
-        if len(cs_data)>0:
-            #fo=open(f'./cs_ss_out/{bmrb}_{pdb}.csv','w')
-            fo = open(f'./cs_ss_out2/{bmrb}_{pdb}.csv', 'w')
-            for cs_list in cs_data:
-                for row in cs_data[cs_list]:
-                    ref_err = None
-                    if len(row[4])>2:
-                        try:
-                            ref_err = cs_ref_err[row[4][:2]]
-                        except KeyError:
-                            pass
-                    else:
-                        try:
-                            ref_err = cs_ref_err[row[4]]
-                        except KeyError:
-                            pass
-                    #print (cs_data[cs_list][row],ss_data[(row[0],row[1],row[2],row[3])])
-                    try:
-                        fo.write(f'{row[3]},{row[4]},{cs_data[cs_list][row]},{ss_data[(row[0],row[1],row[2],row[3])]},{row[1]},{row[2]},{row[0]},{pdb},{bmrb},{ref_err}\n')
-                    except KeyError:
-                        err+=f'Missing atom {(row[0],row[1],row[2],row[3])} {pdb},{bmrb}\n'
-            fo.close()
-            msg = f"Success {pdb},{bmrb}"
-        else:
-            msg = f"No BMRB entry  found in CIF file {pdb},{bmrb}"
-    else:
-        msg = f"No DSSP SS information found in CIF file {pdb},{bmrb}"
-    return msg,err
-
 
 def get_cs_data(str_file):
     try:
@@ -123,33 +73,7 @@ def get_cs_data(str_file):
         cs_data={}
     return cs_data
 
-def get_cs_referencing_error(pdb):
-    val_cif_file = f'{_FTP_VAL_PATH}/{pdb[1:3]}/{pdb}/{pdb}_validation.cif.gz'
-    cif_data = []
-    cs_ref_er = {}
-    try:
-        if val_cif_file.endswith(".gz"):
-            ifh = gzip.open(val_cif_file, 'rt')
-        else:
-            ifh = open(val_cif_file,'r')
-        pRd = PdbxReader(ifh)
-        pRd.read(cif_data)
-        ifh.close()
-        c0 = cif_data[0]
-        cs_ref = c0.getObj('pdbx_vrpt_referencing_offset')
-        try:
-            col_names = cs_ref.getAttributeList()
-            lab_atm_idx = col_names.index('label_atom_id')
-            uncert_idx = col_names.index('uncertainty')
-            precis_idx = col_names.index('precision')
-            val_idx = col_names.index('value')
-            for data in cs_ref.getRowList():
-                cs_ref_er[data[lab_atm_idx]] = data[val_idx]
-        except AttributeError:
-            cs_ref_er = {}
-    except AttributeError:
-        cs_ref_er = {}
-    return cs_ref_er
+
 def get_dssp_ss(cif_file):
     cif_data = []
     try:
@@ -239,102 +163,3 @@ def get_dssp_ss(cif_file):
     except FileNotFoundError:
         ss={}
     return ss
-
-
-
-
-def check_files(pair_list):
-    ok=0
-    not_ok=0
-    empty=0
-    f1=open('failed.txt','w')
-    f2=open('empty.txt','w')
-    for k in pair_list:
-        bmrb=k['bmrb_id']
-        for pdb in k['pdb_ids']:
-            file_name = f'/Users/kumaranbaskaran/ss/{bmrb}_{pdb.lower()}.csv'
-            if not os.path.isfile(file_name):
-                not_ok+=1
-                f1.write(f'{bmrb},{pdb}\n')
-            else:
-                f=open(file_name,'r').read().split("\n")[:-1]
-                if len(f)==0:
-                    empty+=1
-                    f2.write(f'{bmrb},{pdb}\n')
-                else:
-                    ok+=1
-                    print (f)
-    print (f'{ok} files generated, {not_ok} files failed and {empty} files were empty' )
-
-def plot_ss_cs(csvfile):
-    cs=[]
-    res=[]
-    atom=[]
-    ss=[]
-    tag=[]
-    with open(csvfile, mode='r') as file:
-        csvFile = csv.reader(file)
-        for lines in csvFile:
-            if lines[0]=='CYS' and lines[1]=='CB':
-                res.append(lines[0])
-                atom.append(lines[1])
-                cs.append(float(lines[2]))
-                ss.append(lines[3])
-                tag.append(f'{lines[0]}-{lines[1]}')
-    uniq_tags= list(set(tag))
-    # for t in uniq_tags:
-        
-    fig = px.histogram(x=cs,color=ss)
-    fig.show()
-
-def generate_condor_submit_file(fname):
-    f=open(fname,'w')
-    f.write("executable \t= /home/nmrbox/kbaskaran/SecondaryStructureStatistics.py\n")
-    f.write("arguments \t= $(filename)\n")
-    f.write("error \t= err.$(Process)\n")
-    f.write("output \t= out.$(Process)\n")
-    f.write("log = log.$(Process)\n")
-    pair_list = _get_bmrb_pdb_mapping()
-    flist=""
-    for k in pair_list:
-        bmrb = k['bmrb_id']
-        for pdb in k['pdb_ids']:
-            flist+=f'{pdb.lower()}-{bmrb} '
-    f.write(f'queue filename in {flist}\n')
-    f.close()
-
-
-
-if __name__ == "__main__":
-    # if len(sys.argv)<2:
-    #     generate_condor_submit_file('cs_ss.sub')
-    # else:
-    #     pair = sys.argv[1]
-    #     merge_cs_ss(pair)
-    #print (get_cs_referencing_error('6i57'))
-    # plot_ss_cs('../scripts/ss_cs.csv')
-    # msg,err = merge_cs_ss('4481','1B9P')
-    # print (msg)
-    # print (err)
-
-    print (merge_cs_ss('1brv','4020'))
-    # pair_list = _get_bmrb_pdb_mapping()
-    # check_files(pair_list)
-    # f=open('running_log.txt','w')
-    # f1=open('running_err.txt','w')
-    # for k in pair_list:
-    #     bmrb = k['bmrb_id']
-    #     for pdb in k['pdb_ids']:
-    #         if pdb.lower() not in ['1dey','1ugt']:
-    #             msg,err = merge_cs_ss(pdb.lower(),bmrb)
-    #             f.write(f'{msg}\n')
-    #             f1.write(f'{err}\n')
-    # f.close()
-    # f1.close()
-
-    #####################
-    #merge_cs_ss('1k8j','5716')
-    #cs_data = get_cs_data('/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr36445_3.str')
-    #_get_bmrb_pdb_mapping()
-    #ss_data=get_dssp_ss('/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/7VH9.cif')
-    #4141 1nk2
