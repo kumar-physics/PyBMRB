@@ -1,20 +1,13 @@
 import json
-import sys
 import logging
-from urllib.request import urlopen, Request
+import multiprocessing
+from urllib.request import  urlopen,Request
 import gzip
-from typing import Union, List, Optional
 from mmcif.io.PdbxReader import PdbxReader
-# Set the log level to INFO
-logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().setLevel(logging.ERROR)
 import pynmrstar
-import os.path
-import csv
-#import plotly.express as px
-from multiprocessing import Pool
-import os
+import sys
 
-# _API_URL = "http://dev-api.bmrb.io/v2"
 _API_URL = "http://api.bmrb.io/v2"
 _PDB_BMRB_MAPPING = "/mappings/bmrb/pdb?format=json&match_type=exact"
 _FTP_BMRB_PATH = "/projects/BMRB/public/ftp/pub/bmrb/entry_directories"
@@ -31,80 +24,10 @@ one_letter_code = dict([(value, key) for key, value in three_letter_code.items()
 
 def _get_bmrb_pdb_mapping():
     url = Request(_API_URL+_PDB_BMRB_MAPPING)
-    #url = "https://bmrb.io/ftp/pub/bmrb/nmr_pdb_integrated_data/adit_nmr_matched_pdb_bmrb_entry_ids.csv"
     url.add_header('Application', 'PyBMRB')
     r = urlopen(url)
     dump = json.loads(r.read())
-    # for i in dump:
-    #     print (i['bmrb_id'],i['pdb_ids'])
     return dump
-
-def match_chains(cs_data,ss_data):
-    map={}
-    for ss_chain in ss_data:
-        ss_seq = list(ss_data[ss_chain].keys())
-        for cs_list in cs_data:
-            if ss_chain not in map: map[ss_chain]=[]
-            for cs_chain in cs_data[cs_list]:
-                cs_seq = list(set([(i[0],i[1]) for i in list(cs_data[cs_list][cs_chain].keys())]))
-                match_value, offset = find_matching_and_offset(ss_seq,cs_seq)
-                if match_value > 0.7:
-                    map[ss_chain].append([cs_list,cs_chain,match_value,offset])
-    return map
-
-
-
-def find_matching_and_offset(seq1,seq2):
-    offset = 0
-    union = len(seq1)+len(seq2)
-    n= [i[0] for i in seq1]
-    for i in range(min(n)-len(n),max(n)):
-        shifted_seq = [(j[0]+i,j[1]) for j in seq2]
-        common_elements = list(set(shifted_seq+seq1))
-        if len(common_elements)<= union:
-            union = len(common_elements)
-            offset = i
-            matched_seq = shifted_seq
-    match_count = 0
-    for k in matched_seq:
-        if k in seq1:
-            match_count+=1
-    match_value = float(match_count)/float(len(seq1))
-    match_value2 = float(match_count)/float(len(seq2))
-    m_v = max(match_value,match_value2)
-    return m_v,offset
-
-
-
-def get_cs_data(str_file):
-    try:
-        ent = pynmrstar.Entry.from_file(str_file)
-        cs_loop=ent.get_loops_by_category('Atom_chem_shift')
-        cs_data={}
-        for cs in cs_loop:
-            col_names=cs.get_tag_names()
-            seq_idx = col_names.index('_Atom_chem_shift.Comp_index_ID')
-            entity_assembly_idx = col_names.index('_Atom_chem_shift.Entity_assembly_ID')
-            comp_idx = col_names.index('_Atom_chem_shift.Comp_ID')
-            atom_idx = col_names.index('_Atom_chem_shift.Atom_ID')
-            cs_idx = col_names.index('_Atom_chem_shift.Val')
-            list_idx = col_names.index('_Atom_chem_shift.Assigned_chem_shift_list_ID')
-            for row in cs.data:
-                if row[list_idx] not in cs_data:
-                    cs_data[row[list_idx]]={}
-                atom_identifier = (row[entity_assembly_idx],int(row[seq_idx]),row[comp_idx],row[atom_idx])
-                cs_data[row[list_idx]][atom_identifier]= float(row[cs_idx])
-    except FileNotFoundError:
-        cs_data={}
-    cs_data2={}
-    for cs_list in cs_data:
-        cs_data2[cs_list]={}
-        for k in cs_data[cs_list]:
-            if k[0] not in cs_data2[cs_list]:
-                cs_data2[cs_list][k[0]]={}
-            cs_data2[cs_list][k[0]][(k[1],k[2],k[3])]=cs_data[cs_list][k]
-    return cs_data2
-
 
 def get_dssp_ss(cif_file):
     cif_data = []
@@ -219,13 +142,14 @@ def get_dssp_ss(cif_file):
                         try:
                             ss[(k2[0],i,i-offset,sequence[k2[0]][i])] = ss_info['seq_id'][k1]
                         except KeyError:
-                            print (k1)
+                            logging.warning(f'Key not found at instant a {k1}')
                 for k in sequence:
                     for i in sequence[k]:
                         kk = (k,int(i),int(i)-offset,sequence[k][i])
                         if kk not in ss:
                             ss[kk] = 'COIL'
             except AttributeError:
+                logging.info(f'No Struct_conf info found in {cif_file}; probably only beta sheets ')
                 try:
                     struct_sheet = c0.getObj('struct_sheet_range')
                     entity_poly_seq = c0.getObj('entity_poly_seq')
@@ -298,7 +222,7 @@ def get_dssp_ss(cif_file):
                                     try:
                                         ss[(k2[0], i, i - offset, sequence[k2[0]][i])] = ss_info['seq_id'][k1]
                                     except KeyError:
-                                        print(k1)
+                                        logging.warning(f'Key not found at instant b {k1}')
                             for k in sequence:
                                 for i in sequence[k]:
                                     kk = (k, int(i), int(i) - offset, sequence[k][i])
@@ -307,12 +231,16 @@ def get_dssp_ss(cif_file):
                         except AttributeError:
                             ss = {}
                     except AttributeError:
+                        logging.warning(f'No DSSP information found {cif_file}')
                         ss = {}
                 except AttributeError:
+                    logging.warning(f'No DSSP information found {cif_file}')
                     ss = {}
         except AttributeError:
+            logging.warning(f'Entity information missing in file {cif_file}')
             ss={}
     except FileNotFoundError:
+        logging.warning(f'File not found {cif_file}')
         ss={}
     ss2={}
     for k in ss:
@@ -321,191 +249,114 @@ def get_dssp_ss(cif_file):
         ss2[k[0]][(k[1],k[3])]=ss[k]
     return ss2
 
-def find_matching_seq_index(cs_data,ss_data):
-    cs_seq1=[]
-    cs_seq2=[]
-    for k in cs_data:
-        if (k[0],k[1],k[3]) not in cs_seq1: cs_seq1.append((k[0],k[1],k[3]))
-        if (k[0],k[2],k[3]) not in cs_seq2: cs_seq2.append((k[0],k[2],k[3]))
+def get_cs_data(str_file):
+    try:
+        ent = pynmrstar.Entry.from_file(str_file)
+        cs_loop=ent.get_loops_by_category('Atom_chem_shift')
+        cs_data={}
+        for cs in cs_loop:
+            col_names=cs.get_tag_names()
+            seq_idx = col_names.index('_Atom_chem_shift.Comp_index_ID')
+            entity_assembly_idx = col_names.index('_Atom_chem_shift.Entity_assembly_ID')
+            comp_idx = col_names.index('_Atom_chem_shift.Comp_ID')
+            atom_idx = col_names.index('_Atom_chem_shift.Atom_ID')
+            cs_idx = col_names.index('_Atom_chem_shift.Val')
+            list_idx = col_names.index('_Atom_chem_shift.Assigned_chem_shift_list_ID')
+            for row in cs.data:
+                if row[list_idx] not in cs_data:
+                    cs_data[row[list_idx]]={}
+                atom_identifier = (row[entity_assembly_idx],int(row[seq_idx]),row[comp_idx],row[atom_idx])
+                cs_data[row[list_idx]][atom_identifier]= float(row[cs_idx])
+    except FileNotFoundError:
+        logging.warning(f'FIle not found {str_file}')
+        cs_data={}
+    cs_data2={}
+    for cs_list in cs_data:
+        cs_data2[cs_list]={}
+        for k in cs_data[cs_list]:
+            if k[0] not in cs_data2[cs_list]:
+                cs_data2[cs_list][k[0]]={}
+            cs_data2[cs_list][k[0]][(k[1],k[2],k[3])]=cs_data[cs_list][k]
+    return cs_data2
 
-    ss_seq1 = []
-    ss_seq2 = []
-    for k in ss_data:
-        if (k[0], k[1], k[3]) not in ss_seq1: ss_seq1.append((k[0], k[1], k[3]))
-        if (k[0], k[2], k[3]) not in ss_seq2: ss_seq2.append((k[0], k[2], k[2]))
+def match_chains(cs_data,ss_data):
+    map={}
+    for ss_chain in ss_data:
+        ss_seq = list(ss_data[ss_chain].keys())
+        for cs_list in cs_data:
+            if ss_chain not in map: map[ss_chain]=[]
+            for cs_chain in cs_data[cs_list]:
+                cs_seq = list(set([(i[0],i[1]) for i in list(cs_data[cs_list][cs_chain].keys())]))
+                match_value, offset = find_matching_and_offset(ss_seq,cs_seq)
+                if match_value > 0.7:
+                    map[ss_chain].append([cs_list,cs_chain,match_value,offset])
+    return map
 
-    print (len(cs_seq1),len(cs_seq2))
-    print (len(ss_seq1), len(ss_seq2))
-    seq11 = set(cs_seq1+ss_seq1)
-    seq12 = set(cs_seq1+ss_seq2)
-    seq21 = set(cs_seq2+ss_seq1)
-    seq22 = set(cs_seq2+ss_seq2)
-    print (len(seq11),len(seq12),len(seq21),len(seq22))
-    if float(min(len(cs_seq1),len(ss_seq1)))/float(len(seq11)) > 0.8:
-        seq_index = [1,1]
-    elif float(min(len(cs_seq1),len(ss_seq1)))/float(len(seq12)) > 0.8:
-        seq_index = [1,2]
-    elif float(min(len(cs_seq1),len(ss_seq1)))/float(len(seq21)) > 0.8:
-        seq_index = [2,1]
-    elif float(min(len(cs_seq1),len(ss_seq1)))/float(len(seq22)) > 0.8:
-        seq_index = [2,2]
-    else:
-        cs_new,ss_new,m = find_offset(cs_data,ss_data)
-        if m>0.5:
-            return cs_new,ss_new
-        else:
-            raise ValueError(f'Sequence does not match{m}')
-    cs_data_new = {}
-    for k in cs_data:
-        cs_data_new[(k[0],k[seq_index[0]],k[3],k[4])]=cs_data[k]
-    ss_data_new = {}
-    for k in ss_data:
-        ss_data_new[(k[0],k[seq_index[1]],k[3])]=ss_data[k]
-    return cs_data_new,ss_data_new
+def find_matching_and_offset(seq1,seq2):
+    offset = 0
+    union = len(seq1)+len(seq2)
+    n= [i[0] for i in seq1]
+    for i in range(min(n)-len(n),max(n)):
+        shifted_seq = [(j[0]+i,j[1]) for j in seq2]
+        common_elements = list(set(shifted_seq+seq1))
+        if len(common_elements)<= union:
+            union = len(common_elements)
+            offset = i
+            matched_seq = shifted_seq
+    match_count = 0
+    for k in matched_seq:
+        if k in seq1:
+            match_count+=1
+    match_value = float(match_count)/float(len(seq1))
+    match_value2 = float(match_count)/float(len(seq2))
+    m_v = max(match_value,match_value2)
+    return m_v,offset
 
-def find_offset(cs_data,ss_data):
-    cs_seq=[]
-    for k in cs_data:
-        cs_seq.append((k[0],int(k[1]),k[3]))
-    cs_seq= list(set(cs_seq))
-    ss_seq = []
-    for k in ss_data:
-        ss_seq.append((k[0],int(k[1]),k[3]))
-    ss_seq = list(set(ss_seq))
-    cs_new={}
-    ss_new={}
-    if len(ss_seq) <= len(cs_seq):
-        m=0.0
-        offset=0
-        for j in range(-len(ss_seq),len(ss_seq)):
-            new_seq = [(i[0],i[1]-j,i[2]) for i in cs_seq]
-            new_set = set(ss_seq+new_seq)
-            if float(len(ss_seq))/float(len(new_set)) > m:
-                m = float(len(ss_seq))/float(len(new_set))
-                offset=j
-        for k in ss_data:
-            ss_new[(k[0],k[1],k[3])]=ss_data[k]
-        for k in cs_data:
-            cs_new[(k[0],int(k[1])+offset,k[3],k[4])]= cs_data[k]
-    else:
-        m = 0.0
-        offset = 0
-        for j in range(-len(cs_seq), len(cs_seq)):
-            new_seq = [(i[0], i[1] - j, i[2]) for i in ss_seq]
-            new_set = set(cs_seq + new_seq)
-            if float(len(cs_seq)) / float(len(new_set)) > m:
-                m = float(len(cs_seq)) / float(len(new_set))
-                offset = j
-        for k in ss_data:
-            ss_new[(k[0],int(k[1])+offset,k[3])]=ss_data[k]
-        for k in cs_data:
-            cs_new[(k[0],k[1],k[3],k[4])]= cs_data[k]
-    return cs_new,ss_new,m
-
-
-def merge_cs_ss2(pdb,bmrb):
+def merge_cs_ss(input_args):
+    pdb = input_args[0]
+    bmrb = input_args[1]
+    out_dir = input_args[2]
+    logging.info(f'Merging {pdb},{bmrb}')
     #pdb= pair.split("-")[0]
     #bmrb = f'bmr{pair.split("-")[1]}'
     #pdb_file = _REBOXITORY_CIF+f'/{pdb}.cif.gz'
     #bmrb_file = _REBOXITORY_STR+f'/{bmrb}/{bmrb}_3.str'
-    # pdb_file = _FTP_PDB_PATH+f'/{pdb[1]}{pdb[2]}/{pdb}.cif.gz'
-    # bmrb_file = _FTP_BMRB_PATH+f'/bmr{bmrb}/bmr{bmrb}_3.str'
-    pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
-    bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
+    pdb_file = _FTP_PDB_PATH+f'/{pdb[1]}{pdb[2]}/{pdb}.cif.gz'
+    bmrb_file = _FTP_BMRB_PATH+f'/bmr{bmrb}/bmr{bmrb}_3.str'
+    #pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
+    #bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
     ss_data = get_dssp_ss(pdb_file)
     err=''
     msg=''
     if len(ss_data)>0:
         cs_data = get_cs_data(bmrb_file)
         if len(cs_data)>0:
-            fo = open(f'./cs_ss_out2/{bmrb}_{pdb}.csv', 'w')
+            unique_cs_rows=[]
+            fo = open(f'{out_dir}/{bmrb}_{pdb}.csv', 'w')
             map=match_chains(cs_data,ss_data)
             for k in map:
                 if len(map[k])==0:
-                    err+=f'No matching found {pdb} {bmrb}\n'
+                    logging.warning(f'No matching chain found {pdb} {bmrb}')
                 for cs_list in map[k]:
                     for atm in cs_data[cs_list[0]][cs_list[1]]:
                         try:
-                            fo.write(f'{atm[0]},{atm[1]},{atm[2]},{cs_list[0]},{cs_list[1]},{k},{cs_data[cs_list[0]][cs_list[1]][atm]},{ss_data[k][(atm[0]+cs_list[3],atm[1])]},{pdb},{bmrb}\n')
-                            #print (k, atm, ss_data[k][(atm[0]+cs_list[3],atm[1])])
+                            if f'{atm[0]},{atm[1]},{atm[2]},{cs_list[0]},{cs_list[1]},{cs_data[cs_list[0]][cs_list[1]][atm]},{ss_data[k][(atm[0]+cs_list[3],atm[1])]},{pdb},{bmrb}' not in unique_cs_rows:
+                                fo.write(f'{atm[0]},{atm[1]},{atm[2]},{cs_list[0]},{cs_list[1]},{k},{cs_data[cs_list[0]][cs_list[1]][atm]},{ss_data[k][(atm[0]+cs_list[3],atm[1])]},{pdb},{bmrb}\n')
+                                unique_cs_rows.append(f'{atm[0]},{atm[1]},{atm[2]},{cs_list[0]},{cs_list[1]},{cs_data[cs_list[0]][cs_list[1]][atm]},{ss_data[k][(atm[0]+cs_list[3],atm[1])]},{pdb},{bmrb}')
                         except KeyError:
-                            msg+=f'{bmrb},{pdb},{k},{cs_list},{atm}\n'
+                            logging.warning(f'No matching residue  found {bmrb},{pdb},{k},{cs_list},{atm}')
 
             fo.close()
-
-    return msg,err
-
-
-def merge_cs_ss(pdb,bmrb):
-    #pdb= pair.split("-")[0]
-    #bmrb = f'bmr{pair.split("-")[1]}'
-    #pdb_file = _REBOXITORY_CIF+f'/{pdb}.cif.gz'
-    #bmrb_file = _REBOXITORY_STR+f'/{bmrb}/{bmrb}_3.str'
-    # pdb_file = _FTP_PDB_PATH+f'/{pdb[1]}{pdb[2]}/{pdb}.cif.gz'
-    # bmrb_file = _FTP_BMRB_PATH+f'/bmr{bmrb}/bmr{bmrb}_3.str'
-    pdb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
-    bmrb_file = f'/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
-    ss_data = get_dssp_ss(pdb_file)
-    err=''
-    if len(ss_data)>0:
-        cs_data = get_cs_data(bmrb_file)
-        if len(cs_data)>0:
-            fo = open(f'./cs_ss_out2/{bmrb}_{pdb}.csv', 'w')
-            for cs_list in cs_data:
-                cs_data_new, ss_data_new = find_matching_seq_index(cs_data[cs_list], ss_data)
-                for row in cs_data_new:
-                    try:
-                        fo.write(f'{row[2]},{row[3]},{cs_data_new[row]},{ss_data_new[row[:-1]]},{row[1]},{row[2]},{row[0]},{pdb},{bmrb}\n')
-                    except KeyError:
-                        err+=f'Missing atom {(row[0],row[1],row[2])} {pdb},{bmrb}\n'
-            fo.close()
-            msg = f"Success {pdb},{bmrb}"
-        else:
-            msg = f"No BMRB entry  found in CIF file {pdb},{bmrb}"
-    else:
-        msg = f"No DSSP SS information found in CIF file {pdb},{bmrb}"
-    return msg,err
-
-def read_missmath(fname):
-    # merge_cs_ss2('1fi6','4778')
-    f=open(fname,'r').read().split("\n")[:-1]
-    for l in f:
-        d=l.split(" ")
-        bmrb = d[-1]
-        pdb = d[-2]
-        print (pdb,bmrb)
-        msg, err = merge_cs_ss2(pdb.lower(), bmrb)
-        print (msg)
-        print (err)
-        # cmd = f'wget https://files.rcsb.org/view/{pdb}.cif -O /Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/{pdb}.cif'
-        # os.system(cmd)
-        # cmd = f'wget https://bmrb.io/ftp/pub/bmrb/entry_directories/bmr{bmrb}/bmr{bmrb}_3.str -O /Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr{bmrb}_3.str'
-        # os.system(cmd)
-
-
 
 
 if __name__ == "__main__":
-    # print (parse_secondary_structure('/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/1akk.cif'))
-    read_missmath('./missint_new.txt')
-    # pair_list = _get_bmrb_pdb_mapping()
-    # f=open('running_log.txt','w')
-    # f1=open('running_err.txt','w')
-    # for k in pair_list:
-    #     bmrb = k['bmrb_id']
-    #     for pdb in k['pdb_ids']:
-    #         if pdb.lower() not in ['1dey','1ugt']:
-    #             f.write(f'running {pdb},{bmrb}\n')
-    #             try:
-    #                 msg,err = merge_cs_ss2(pdb.lower(),bmrb)
-    #             except ValueError as e:
-    #                 msg = f'Seq dont match {pdb.lower()},{bmrb},{e}'
-    #                 err = f'Seq dont match {pdb.lower()},{bmrb},{e}'
-    #             f.write(f'{msg}\n')
-    #             f1.write(f'{err}\n')
-    # f.close()
-    # f1.close()
-    #print (merge_cs_ss('1heh','4900'))
-    # cs_sata = get_cs_data('/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/bmr4020_3.str')
-    # ss_data = get_dssp_ss('/Users/kumaranbaskaran/Projects/bmrb/PyBMRB/pybmrb/tests/test_data/1brv.cif')
-    # find_matching_seq_index(cs_sata,ss_data)
+    out_dir = sys.argv[1]
+    pair_list = _get_bmrb_pdb_mapping()
+    input_list = []
+    for k in pair_list:
+        bmrb = k['bmrb_id']
+        for pdb in k['pdb_ids']:
+            if pdb.lower() not in ['1dey','1ugt']:
+                input_list.append((pdb.lower(),bmrb,out_dir))
+    pool = multiprocessing.Pool()
+    pool.map(merge_cs_ss,input_list)

@@ -162,6 +162,7 @@ def get_dssp_ss(cif_file):
         ifh.close()
         c0 = cif_data[0]
         struct_conf = c0.getObj('struct_conf')
+        struct_sheet = c0.getObj('struct_sheet_range')
         entity_poly_seq = c0.getObj('entity_poly_seq')
         entity_poly = c0.getObj('entity_poly')
         try:
@@ -202,6 +203,22 @@ def get_dssp_ss(cif_file):
                 ss_info['auth_seq_id']={}
                 for dat in struct_conf.getRowList():
                     conf_type = dat[conf_type_idx]
+                    beg_auth_seq_id = dat[beg_auth_seq_idx]
+                    beg_auth_asym_id = dat[beg_auth_asym_idx]
+                    beg_auth_comp_id = dat[beg_auth_comp_idx]
+                    end_auth_seq_id = dat[end_auth_seq_idx]
+                    end_auth_asym_id = dat[end_auth_asym_idx]
+                    end_auth_comp_id = dat[end_auth_comp_idx]
+                    beg_seq_id = dat[beg_seq_idx]
+                    beg_asym_id = dat[beg_asym_idx]
+                    beg_comp_id = dat[beg_comp_idx]
+                    end_seq_id = dat[end_seq_idx]
+                    end_asym_id = dat[end_asym_idx]
+                    end_comp_id = dat[end_comp_idx]
+                    ss_info['seq_id'][(beg_asym_id,beg_seq_id,beg_comp_id,end_asym_id,end_seq_id,end_asym_id)]=conf_type
+                    ss_info['auth_seq_id'][(beg_auth_asym_id,beg_auth_seq_id,beg_auth_comp_id,end_auth_asym_id,end_auth_seq_id,end_auth_comp_id)]=conf_type
+                for dat in struct_sheet.getRowList():
+                    conf_type = "SHEET"
                     beg_auth_seq_id = dat[beg_auth_seq_idx]
                     beg_auth_asym_id = dat[beg_auth_asym_idx]
                     beg_auth_comp_id = dat[beg_auth_comp_idx]
