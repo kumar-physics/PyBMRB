@@ -1,5 +1,5 @@
-3.0.8
+3.0.9
 ------
+    - Supported python versions updated
 
-    - Sparky peak list bug fixed
 
